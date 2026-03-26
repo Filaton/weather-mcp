@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from app.weather import (
     OpenMeteoProvider,
@@ -129,12 +130,12 @@ async def test_openmeteo_current():
     ):
         result = await OpenMeteoProvider().get_current(51.5, -0.1)
 
-    assert result["temp_celsius"] == 15.3
-    assert result["feels_like_celsius"] == 13.1
-    assert result["humidity_percent"] == 72
-    assert result["wind_speed_kmh"] == 18.5
-    assert result["weather_code"] == 2
-    assert result["description"] == "Partly cloudy"
+    assert result.temp_celsius == 15.3
+    assert result.feels_like_celsius == 13.1
+    assert result.humidity_percent == 72
+    assert result.wind_speed_kmh == 18.5
+    assert result.weather_code == 2
+    assert result.description == "Partly cloudy"
 
 
 async def test_openmeteo_current_unknown_code():
@@ -152,7 +153,7 @@ async def test_openmeteo_current_unknown_code():
     ):
         result = await OpenMeteoProvider().get_current(0.0, 0.0)
 
-    assert result["description"] == "WMO code 999"
+    assert result.description == "WMO code 999"
 
 
 async def test_openmeteo_forecast():
@@ -170,14 +171,14 @@ async def test_openmeteo_forecast():
     ):
         result = await OpenMeteoProvider().get_forecast(51.5, -0.1, 2)
 
-    assert len(result["days"]) == 2
-    day0 = result["days"][0]
-    assert day0["date"] == "2026-03-26"
-    assert day0["temp_max_celsius"] == 18.0
-    assert day0["temp_min_celsius"] == 10.0
-    assert day0["precipitation_mm"] == 0.0
-    assert day0["description"] == "Clear sky"
-    assert result["days"][1]["description"] == "Moderate rain"
+    assert len(result.days) == 2
+    day0 = result.days[0]
+    assert day0.date == "2026-03-26"
+    assert day0.temp_max_celsius == 18.0
+    assert day0.temp_min_celsius == 10.0
+    assert day0.precipitation_mm == 0.0
+    assert day0.description == "Clear sky"
+    assert result.days[1].description == "Moderate rain"
 
 
 async def test_openmeteo_forecast_days_capped():
@@ -215,12 +216,12 @@ async def test_openweathermap_current():
     ):
         result = await OpenWeatherMapProvider("testkey").get_current(48.8, 2.3)
 
-    assert result["temp_celsius"] == 22.0
-    assert result["feels_like_celsius"] == 20.5
-    assert result["humidity_percent"] == 65
-    assert result["wind_speed_kmh"] == pytest.approx(18.0)
-    assert result["weather_code"] == 800
-    assert result["description"] == "Clear sky"
+    assert result.temp_celsius == 22.0
+    assert result.feels_like_celsius == 20.5
+    assert result.humidity_percent == 65
+    assert result.wind_speed_kmh == pytest.approx(18.0)
+    assert result.weather_code == 800
+    assert result.description == "Clear sky"
 
 
 async def test_openweathermap_forecast_aggregation():
@@ -229,19 +230,19 @@ async def test_openweathermap_forecast_aggregation():
         "list": [
             {
                 "dt_txt": "2026-03-26 00:00:00",
-                "main": {"temp": 10.0},
+                "main": {"temp": 10.0, "feels_like": 9.0, "humidity": 80},
                 "weather": [{"id": 500, "description": "light rain"}],
                 "rain": {"3h": 1.5},
             },
             {
                 "dt_txt": "2026-03-26 03:00:00",
-                "main": {"temp": 12.0},
+                "main": {"temp": 12.0, "feels_like": 11.0, "humidity": 75},
                 "weather": [{"id": 500, "description": "light rain"}],
                 "rain": {"3h": 0.5},
             },
             {
                 "dt_txt": "2026-03-27 00:00:00",
-                "main": {"temp": 18.0},
+                "main": {"temp": 18.0, "feels_like": 17.0, "humidity": 60},
                 "weather": [{"id": 800, "description": "clear sky"}],
             },
         ]
@@ -251,15 +252,15 @@ async def test_openweathermap_forecast_aggregation():
     ):
         result = await OpenWeatherMapProvider("testkey").get_forecast(48.8, 2.3, 2)
 
-    assert len(result["days"]) == 2
-    day0 = result["days"][0]
-    assert day0["date"] == "2026-03-26"
-    assert day0["temp_max_celsius"] == 12.0
-    assert day0["temp_min_celsius"] == 10.0
-    assert day0["precipitation_mm"] == pytest.approx(2.0)
-    day1 = result["days"][1]
-    assert day1["date"] == "2026-03-27"
-    assert day1["description"] == "Clear sky"
+    assert len(result.days) == 2
+    day0 = result.days[0]
+    assert day0.date == "2026-03-26"
+    assert day0.temp_max_celsius == 12.0
+    assert day0.temp_min_celsius == 10.0
+    assert day0.precipitation_mm == pytest.approx(2.0)
+    day1 = result.days[1]
+    assert day1.date == "2026-03-27"
+    assert day1.description == "Clear sky"
 
 
 async def test_openweathermap_forecast_days_capped():
@@ -288,3 +289,40 @@ def test_get_provider_owm(monkeypatch):
     provider = get_provider()
     assert isinstance(provider, OpenWeatherMapProvider)
     assert provider._api_key == "mykey123"
+
+
+# ---------------------------------------------------------------------------
+# Validation errors
+# ---------------------------------------------------------------------------
+
+
+async def test_openmeteo_current_validation_error():
+    """Missing required field in API response raises ValidationError."""
+    payload = {
+        "current": {
+            # temperature_2m is missing
+            "apparent_temperature": 13.1,
+            "relative_humidity_2m": 72,
+            "wind_speed_10m": 18.5,
+            "weather_code": 2,
+        }
+    }
+    with patch(
+        "app.weather.httpx.AsyncClient", return_value=_make_client_mock(payload)
+    ):
+        with pytest.raises(ValidationError):
+            await OpenMeteoProvider().get_current(51.5, -0.1)
+
+
+async def test_openweathermap_current_validation_error():
+    """Missing required field in OWM API response raises ValidationError."""
+    payload = {
+        "main": {"temp": 22.0, "feels_like": 20.5, "humidity": 65},
+        # "wind" key is missing
+        "weather": [{"id": 800, "description": "clear sky"}],
+    }
+    with patch(
+        "app.weather.httpx.AsyncClient", return_value=_make_client_mock(payload)
+    ):
+        with pytest.raises(ValidationError):
+            await OpenWeatherMapProvider("testkey").get_current(48.8, 2.3)

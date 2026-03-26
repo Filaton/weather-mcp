@@ -5,6 +5,17 @@ from typing import Protocol, runtime_checkable
 
 import httpx
 
+from app.schemas import (
+    CurrentWeather,
+    Forecast,
+    ForecastDay,
+    _GeoResponse,
+    _OMCurrentResponse,
+    _OMForecastResponse,
+    _OWMCurrentResponse,
+    _OWMForecastResponse,
+)
+
 # WMO Weather Interpretation Codes (used by Open-Meteo)
 WMO_DESCRIPTIONS: dict[int, str] = {
     0: "Clear sky",
@@ -45,12 +56,12 @@ async def geocode(location: str) -> tuple[float, float]:
         response.raise_for_status()
         data = response.json()
 
-    results = data.get("results")
-    if not results:
+    parsed = _GeoResponse.model_validate(data)
+    if not parsed.results:
         raise ValueError(f"Location not found: {location!r}")
 
-    result = results[0]
-    return float(result["latitude"]), float(result["longitude"])
+    result = parsed.results[0]
+    return result.latitude, result.longitude
 
 
 async def resolve_location(
@@ -72,12 +83,12 @@ async def resolve_location(
 
 @runtime_checkable
 class WeatherProvider(Protocol):
-    async def get_current(self, lat: float, lon: float) -> dict:
-        """Return current weather conditions as a normalized dict."""
+    async def get_current(self, lat: float, lon: float) -> CurrentWeather:
+        """Return current weather conditions as a normalized model."""
         ...
 
-    async def get_forecast(self, lat: float, lon: float, days: int) -> dict:
-        """Return a multi-day forecast as a normalized dict."""
+    async def get_forecast(self, lat: float, lon: float, days: int) -> Forecast:
+        """Return a multi-day forecast as a normalized model."""
         ...
 
 
@@ -86,7 +97,7 @@ class OpenMeteoProvider:
 
     _BASE = "https://api.open-meteo.com/v1/forecast"
 
-    async def get_current(self, lat: float, lon: float) -> dict:
+    async def get_current(self, lat: float, lon: float) -> CurrentWeather:
         params = {
             "latitude": lat,
             "longitude": lon,
@@ -104,18 +115,18 @@ class OpenMeteoProvider:
             response.raise_for_status()
             data = response.json()
 
-        c = data["current"]
-        code = int(c["weather_code"])
-        return {
-            "temp_celsius": c["temperature_2m"],
-            "feels_like_celsius": c["apparent_temperature"],
-            "humidity_percent": c["relative_humidity_2m"],
-            "wind_speed_kmh": c["wind_speed_10m"],
-            "weather_code": code,
-            "description": WMO_DESCRIPTIONS.get(code, f"WMO code {code}"),
-        }
+        c = _OMCurrentResponse.model_validate(data).current
+        code = c.weather_code
+        return CurrentWeather(
+            temp_celsius=c.temperature_2m,
+            feels_like_celsius=c.apparent_temperature,
+            humidity_percent=c.relative_humidity_2m,
+            wind_speed_kmh=c.wind_speed_10m,
+            weather_code=code,
+            description=WMO_DESCRIPTIONS.get(code, f"WMO code {code}"),
+        )
 
-    async def get_forecast(self, lat: float, lon: float, days: int) -> dict:
+    async def get_forecast(self, lat: float, lon: float, days: int) -> Forecast:
         days = min(max(days, 1), 16)
         params = {
             "latitude": lat,
@@ -133,21 +144,21 @@ class OpenMeteoProvider:
             response.raise_for_status()
             data = response.json()
 
-        daily = data["daily"]
+        daily = _OMForecastResponse.model_validate(data).daily
         result_days = []
-        for i, date in enumerate(daily["time"]):
-            code = int(daily["weather_code"][i])
+        for i, date in enumerate(daily.time):
+            code = daily.weather_code[i]
             result_days.append(
-                {
-                    "date": date,
-                    "temp_max_celsius": daily["temperature_2m_max"][i],
-                    "temp_min_celsius": daily["temperature_2m_min"][i],
-                    "precipitation_mm": daily["precipitation_sum"][i],
-                    "weather_code": code,
-                    "description": WMO_DESCRIPTIONS.get(code, f"WMO code {code}"),
-                }
+                ForecastDay(
+                    date=date,
+                    temp_max_celsius=daily.temperature_2m_max[i],
+                    temp_min_celsius=daily.temperature_2m_min[i],
+                    precipitation_mm=daily.precipitation_sum[i],
+                    weather_code=code,
+                    description=WMO_DESCRIPTIONS.get(code, f"WMO code {code}"),
+                )
             )
-        return {"days": result_days}
+        return Forecast(days=result_days)
 
 
 class OpenWeatherMapProvider:
@@ -158,7 +169,7 @@ class OpenWeatherMapProvider:
     def __init__(self, api_key: str) -> None:
         self._api_key = api_key
 
-    async def get_current(self, lat: float, lon: float) -> dict:
+    async def get_current(self, lat: float, lon: float) -> CurrentWeather:
         params = {
             "lat": lat,
             "lon": lon,
@@ -170,16 +181,17 @@ class OpenWeatherMapProvider:
             response.raise_for_status()
             data = response.json()
 
-        return {
-            "temp_celsius": data["main"]["temp"],
-            "feels_like_celsius": data["main"]["feels_like"],
-            "humidity_percent": data["main"]["humidity"],
-            "wind_speed_kmh": round(data["wind"]["speed"] * 3.6, 1),
-            "weather_code": data["weather"][0]["id"],
-            "description": data["weather"][0]["description"].capitalize(),
-        }
+        parsed = _OWMCurrentResponse.model_validate(data)
+        return CurrentWeather(
+            temp_celsius=parsed.main.temp,
+            feels_like_celsius=parsed.main.feels_like,
+            humidity_percent=parsed.main.humidity,
+            wind_speed_kmh=round(parsed.wind.speed * 3.6, 1),
+            weather_code=parsed.weather[0].id,
+            description=parsed.weather[0].description.capitalize(),
+        )
 
-    async def get_forecast(self, lat: float, lon: float, days: int) -> dict:
+    async def get_forecast(self, lat: float, lon: float, days: int) -> Forecast:
         # OWM free tier: 5-day forecast in 3-hour steps
         days = min(max(days, 1), 5)
         params = {
@@ -194,34 +206,36 @@ class OpenWeatherMapProvider:
             response.raise_for_status()
             data = response.json()
 
+        parsed = _OWMForecastResponse.model_validate(data)
+
         # Aggregate 3-hour slots into daily buckets
         buckets: dict[str, dict] = {}
-        for entry in data["list"]:
-            date = entry["dt_txt"].split(" ")[0]
+        for entry in parsed.list:
+            date = entry.dt_txt.split(" ")[0]
             if date not in buckets:
                 buckets[date] = {
                     "temps": [],
                     "precip": 0.0,
-                    "weather_id": entry["weather"][0]["id"],
-                    "description": entry["weather"][0]["description"].capitalize(),
+                    "weather_id": entry.weather[0].id,
+                    "description": entry.weather[0].description.capitalize(),
                 }
-            buckets[date]["temps"].append(entry["main"]["temp"])
-            buckets[date]["precip"] += entry.get("rain", {}).get("3h", 0.0)
-            buckets[date]["precip"] += entry.get("snow", {}).get("3h", 0.0)
+            buckets[date]["temps"].append(entry.main.temp)
+            buckets[date]["precip"] += entry.rain.h3 if entry.rain else 0.0
+            buckets[date]["precip"] += entry.snow.h3 if entry.snow else 0.0
 
         result_days = []
         for date, bucket in sorted(buckets.items()):
             result_days.append(
-                {
-                    "date": date,
-                    "temp_max_celsius": round(max(bucket["temps"]), 1),
-                    "temp_min_celsius": round(min(bucket["temps"]), 1),
-                    "precipitation_mm": round(bucket["precip"], 1),
-                    "weather_code": bucket["weather_id"],
-                    "description": bucket["description"],
-                }
+                ForecastDay(
+                    date=date,
+                    temp_max_celsius=round(max(bucket["temps"]), 1),
+                    temp_min_celsius=round(min(bucket["temps"]), 1),
+                    precipitation_mm=round(bucket["precip"], 1),
+                    weather_code=bucket["weather_id"],
+                    description=bucket["description"],
+                )
             )
-        return {"days": result_days}
+        return Forecast(days=result_days)
 
 
 def get_provider() -> WeatherProvider:

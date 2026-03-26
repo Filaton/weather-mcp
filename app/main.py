@@ -25,7 +25,8 @@ async def get_current_weather(
     """
     coords = await resolve_location(location, lat, lon)
     provider = get_provider()
-    return await provider.get_current(*coords)
+    result = await provider.get_current(*coords)
+    return result.model_dump()
 
 
 @mcp.tool()
@@ -50,7 +51,8 @@ async def get_forecast(
     """
     coords = await resolve_location(location, lat, lon)
     provider = get_provider()
-    return await provider.get_forecast(*coords, days)
+    result = await provider.get_forecast(*coords, days)
+    return result.model_dump()
 
 
 if __name__ == "__main__":
