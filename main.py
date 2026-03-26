@@ -1,6 +1,9 @@
 """Weather MCP server — exposes get_current_weather and get_forecast tools."""
 
+from typing import Literal
+
 from mcp.server.fastmcp import FastMCP
+from pydantic_settings import BaseSettings, CliApp
 
 from app.weather import get_provider, resolve_location
 
@@ -55,5 +58,19 @@ async def get_forecast(
     return result.model_dump()
 
 
+class ServerSettings(BaseSettings):
+    """CLI and environment configuration for the weather MCP server."""
+
+    transport: Literal["stdio", "sse", "streamable-http"] = "stdio"
+    host: str = "0.0.0.0"
+    port: int = 8000
+
+    def cli_cmd(self) -> None:
+        if self.transport != "stdio":
+            mcp.settings.host = self.host
+            mcp.settings.port = self.port
+        mcp.run(transport=self.transport)
+
+
 if __name__ == "__main__":
-    mcp.run()
+    CliApp.run(ServerSettings)
