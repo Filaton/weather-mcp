@@ -1,100 +1,114 @@
-# python-template-app
+# weather-mcp
 
-A Python application template with batteries-included tooling: formatting, linting, import sorting, type checking, and pre-commit hooks — all pre-configured and ready to use.
+An MCP (Model Context Protocol) server that exposes live weather tools for AI assistants. Supports current conditions and multi-day forecasts via [Open-Meteo](https://open-meteo.com/) (default, no API key) or [OpenWeatherMap](https://openweathermap.org/) (set `OPENWEATHERMAP_API_KEY`).
 
 ## Prerequisites
 
-| Tool                                                                                    | Version | Notes                                                                 |
-| --------------------------------------------------------------------------------------- | ------- | --------------------------------------------------------------------- |
-| Python                                                                                  | 3.13+   | Manage with [pyenv](https://github.com/pyenv/pyenv) or system install |
-| [uv](https://docs.astral.sh/uv/)                                                        | latest  | Dependency management & virtualenv                                    |
-| VS Code                                                                                 | latest  | Recommended editor                                                    |
-| [Pylance](https://marketplace.visualstudio.com/items?itemName=ms-python.vscode-pylance) | latest  | VS Code extension for type checking                                   |
+| Tool | Version | Notes |
+|---|---|---|
+| Python | 3.13+ | Manage with [pyenv](https://github.com/pyenv/pyenv) or system install |
+| [uv](https://docs.astral.sh/uv/) | latest | Dependency management & virtualenv |
 
 ## Setup
 
 ```bash
 # 1. Clone the repository
-git clone <your-repo-url>
-cd python-template-app
+git clone https://github.com/Filaton/weather-mcp.git
+cd weather-mcp
 
-# 2. Create the virtual environment and install all dependencies
+# 2. Install all dependencies
 uv sync
 
 # 3. Install pre-commit hooks
 uv run pre-commit install
 ```
 
-## Running the App
-
-Once you've populated `app/main.py`, run the application with:
+## Running the Server
 
 ```bash
-uv run python -m app.main
+# stdio (default — for Claude Code / MCP clients that spawn the process)
+uv run python main.py
+
+# SSE over HTTP (for Docker or remote access)
+uv run python main.py --transport sse
+uv run python main.py --transport sse --host 127.0.0.1 --port 9000
+
+# Streamable HTTP
+uv run python main.py --transport streamable-http --port 9000
+```
+
+Transport and host/port can also be set via environment variables (`TRANSPORT`, `HOST`, `PORT`) — CLI args take priority.
+
+## MCP Tools
+
+### `get_current_weather`
+Returns current conditions for a location.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `location` | `str` (optional) | City or place name, e.g. `"London"` |
+| `lat` | `float` (optional) | Latitude — use with `lon` instead of `location` |
+| `lon` | `float` (optional) | Longitude — use with `lat` instead of `location` |
+
+Returns: `temp_celsius`, `feels_like_celsius`, `humidity_percent`, `wind_speed_kmh`, `weather_code`, `description`.
+
+### `get_forecast`
+Returns a multi-day forecast.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `location` | `str` (optional) | City or place name |
+| `lat` | `float` (optional) | Latitude |
+| `lon` | `float` (optional) | Longitude |
+| `days` | `int` | Forecast days — 1–16 (Open-Meteo) or 1–5 (OpenWeatherMap). Default: 7 |
+
+Returns: `days` list, each with `date`, `temp_max_celsius`, `temp_min_celsius`, `precipitation_mm`, `weather_code`, `description`.
+
+## Weather Providers
+
+| Provider | API key required | Max forecast days |
+|---|---|---|
+| [Open-Meteo](https://open-meteo.com/) | No (default) | 16 |
+| [OpenWeatherMap](https://openweathermap.org/) | Yes — set `OPENWEATHERMAP_API_KEY` | 5 |
+
+The server selects the provider automatically: Open-Meteo is used unless `OPENWEATHERMAP_API_KEY` is set in the environment.
+
+## Connecting to Claude Code
+
+```bash
+# Register globally (stdio)
+claude mcp add weather -- uv run python /path/to/weather-mcp/main.py
+
+# Register with SSE transport (e.g. Docker or remote server)
+claude mcp add weather --transport sse http://localhost:8000/sse
 ```
 
 ## Running Tests
 
 ```bash
 uv run pytest
-```
-
-With coverage:
-
-```bash
 uv run pytest --cov=app
 ```
 
 ## Code Quality
 
-### Format
-
 ```bash
-uv run ruff format .
+uv run ruff format .            # Format
+uv run ruff check --fix .       # Lint and auto-fix
+uv run pre-commit run --all-files  # All hooks
 ```
-
-### Lint (and auto-fix)
-
-```bash
-uv run ruff check --fix .
-```
-
-### Run all pre-commit hooks manually
-
-```bash
-uv run pre-commit run --all-files
-```
-
-Pre-commit hooks run automatically on every `git commit`, catching formatting and lint issues before they reach the repository.
-
-## Tooling Overview
-
-| Tool                                                      | Purpose                                          | Config                                              |
-| --------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------- |
-| [ruff](https://docs.astral.sh/ruff/)                      | Formatter, linter & import sorter                | `pyproject.toml` → `[tool.ruff]`                    |
-| [pytest](https://docs.pytest.org/)                        | Test runner                                      | `pyproject.toml` → `[tool.pytest.ini_options]`      |
-| [pre-commit](https://pre-commit.com/)                     | Git hook manager                                 | `.pre-commit-config.yaml`                           |
-| [Pyright / Pylance](https://github.com/microsoft/pyright) | Static type checker                              | `pyrightconfig.json`                                |
-
-- **Line length**: 88 — set in `[tool.ruff]`, applies to both formatting and linting.
-- **Lint rules**: `E`, `W` (pycodestyle), `F` (pyflakes), `I` (isort) — configured in `[tool.ruff.lint]`.
-- **Type checking mode**: `standard` — enables a broad set of Pyright checks without requiring annotations everywhere.
 
 ## Project Structure
 
 ```
 .
+├── main.py              # Server entry point (CLI via pydantic-settings CliApp)
 ├── app/
-│   ├── __init__.py
-│   └── main.py          # Application entry point
+│   ├── schemas.py       # Pydantic models: API response validation + output types
+│   └── weather.py       # Weather providers (Open-Meteo, OpenWeatherMap) + geocoding
 ├── tests/
-│   ├── __init__.py
-│   └── test_main.py
-├── .pre-commit-config.yaml
-├── .python-version      # Pinned Python version (used by pyenv / uv)
-├── .vscode/
-│   └── settings.json    # VS Code workspace settings
-├── pyrightconfig.json   # Pyright / Pylance type checking config
-├── pyproject.toml       # Project metadata, dependencies, tool config
-└── main.py              # Standalone entry point (optional)
+│   └── test_main.py     # Pytest suite (17 tests)
+├── pyproject.toml
+└── pyrightconfig.json
 ```
+
