@@ -1,0 +1,11 @@
+{
+    "venvPath": ".",
+    "venv": ".venv",
+    "pythonVersion": "3.13",
+    "typeCheckingMode": "standard",
+    "exclude": [
+        ".venv",
+        "build",
+        "dist"
+    ]
+}

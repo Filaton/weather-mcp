@@ -1,0 +1,28 @@
+{
+    "name": "Python Default Environment",
+    "image": "mcr.microsoft.com/devcontainers/python:1-3.13-bullseye",
+    "containerEnv": {
+        "UV_LINK_MODE": "copy"
+    },
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+                "editor.formatOnSave": true,
+                "editor.defaultFormatter": "charliermarsh.ruff",
+                "editor.codeActionsOnSave": {
+                    "source.fixAll": "explicit",
+                    "source.organizeImports": "explicit"
+                }
+            },
+            "extensions": [
+                "charliermarsh.ruff",
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "ms-python.debugpy",
+                "ms-python.vscode-python-envs"
+            ]
+        }
+    },
+    "postCreateCommand": "pipx install uv && uv sync"
+}

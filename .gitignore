@@ -1,0 +1,13 @@
+# .vscode/ is for Visual Studio Code settings and should be ignored
+.vscode/settings.json
+
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
